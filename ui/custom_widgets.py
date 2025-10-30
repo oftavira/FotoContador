@@ -5,25 +5,50 @@ from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QPainter, QColor, QFont
 
 class LEDIndicador(QLabel):
-    """Indicador LED personalizado."""
+    """Indicador LED personalizado - Versión corregida"""
     def __init__(self, parent=None, size=20):
         super().__init__(parent)
         self.setFixedSize(size, size)
         self.set_off()
     
     def set_on(self, color='green'):
-        self.setStyleSheet(f"""
-                           background-color: {color};
-                           boder-radius: {self.width() // 2}px;
-                           boder: 2px solid darkgray;
-                           """)
+        """Encender LED - método corregido sin CSS problemático"""
+        try:
+            # Método 1: Intentar con QPalette (más robusto)
+            from PyQt5.QtGui import QPalette, QColor
+            palette = self.palette()
+            palette.setColor(QPalette.Window, QColor(color))
+            self.setPalette(palette)
+            self.setAutoFillBackground(True)
+            
+            # Método 2: CSS simple como respaldo
+            self.setStyleSheet(f"""
+                background-color: {color};
+                border-radius: {self.width()//2}px;
+                border: 1px solid #666;
+            """)
+        except Exception as e:
+            print(f"Error en set_on: {e}")
+            # Fallback mínimo
+            self.setStyleSheet(f"background-color: {color};")
 
     def set_off(self):
-        self.setStyleSheet(f"""
-                           background-color: gray;
-                           border-radius: {self.width() // 2}px;
-                           border: 2px solid darkgray;
-                            """)
+        """Apagar LED - método corregido"""
+        try:
+            from PyQt5.QtGui import QPalette, QColor
+            palette = self.palette()
+            palette.setColor(QPalette.Window, QColor('gray'))
+            self.setPalette(palette)
+            self.setAutoFillBackground(True)
+            
+            self.setStyleSheet(f"""
+                background-color: gray;
+                border-radius: {self.width()//2}px;
+                border: 1px solid #666;
+            """)
+        except Exception as e:
+            print(f"Error en set_off: {e}")
+            self.setStyleSheet("background-color: gray;")
     
 class DigitalDisplay(QLCDNumber):
     """Display digital personalizado."""

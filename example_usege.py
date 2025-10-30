@@ -1,6 +1,6 @@
 import numpy as numpy
 import matplotlib.pyplot as plt
-from sr400 import SR400, DiscriminatorChannel, measure_s_curve, find_optimal_threshold
+from sr400_controller import SR400, DiscriminatorChannel, measure_s_curve, find_optimal_threshold, RemoteMode
 
 #Ejemplo de uso de eventos
 def on_data_received(data):

@@ -1,6 +1,7 @@
 import serial
 import time
 import re
+import math
 import numpy as np
 from typing import Callable, List, Tuple, Optional
 import threading
@@ -92,11 +93,25 @@ class SR400:
                 timeout=self.timeout
             )
             time.sleep(2)
+            
+            test_response = self.query("*IDN?")
+            
+            if not test_response:
+                test_response = self.get_discriminator_level(DiscriminatorChannel.A)
+            
             self.is_connected = True
             self._trigger_event(self.on_status_changed,"Conectado")
+            print(f"✅ Conectado exitosamente al SR400 en {self.port}")
             return True
+        except serial.SerialException as e:
+            error_msg = f"No se pudo conectar al SR400 en {self.port}: {str(e)}"
+            self._trigger_event(self.on_error, error_msg)
+            print(f"❌ {error_msg}")
+            return False
         except Exception as e:
-            self._trigger_event(self.on_error, f"Error de conexión: {str(e)}")
+            error_msg = f"Error inesperado: {str(e)}"
+            self._trigger_event(self.on_error, error_msg)
+            print(f"❌ {error_msg}")
             return False
         
     def disconnect(self):
@@ -140,6 +155,10 @@ class SR400:
                 self._trigger_event(self.on_error, f"Error leyendo respuesta: {str(e)}")
                 return None
     #-----Comandos principales ------
+    def set_count_mode(self, mode:CountMode) ->bool:
+        """Establece el modo de conteo"""
+        return self.send_command(f"CM{mode.value}")
+    
     def set_discriminator_level(self, channel: DiscriminatorChannel, voltage: float) -> bool:
         """
         Configura el nivel del discriminador (-0.3V a +0.3v)
@@ -385,6 +404,178 @@ class SR400:
     def __exit__(self, exc_type, exc_value, exc_tb):
         self.disconnect()
 
+class SR400Simulator:
+    """Simulador del SR400 para desarrollo sin hardware"""
+
+    def __init__(self):
+        self.is_connected = True
+        self.is_counting = False
+        self.port = "SIMULADOR"
+
+        self.discriminator_levels = {
+            DiscriminatorChannel.A: -0.01,
+            DiscriminatorChannel.B: -0.01,
+            DiscriminatorChannel.T: -0.01
+        }
+        self.count_rates = {'A': 1250.5, 'B': 980.3}
+
+        self.on_data_received = None
+        self.on_error = None
+        self.on_status_changed = None
+        self.on_counting_changed = None
+
+    def connect(self):
+        """Conectar al simulador - versión mejorada"""
+        print("🔌 SIMULADOR: Conectando...")
+        time.sleep(1)  # Simular tiempo de conexión
+        
+        self.is_connected = True
+        self.is_counting = False
+
+        # Disparar evento de estado
+        if self.on_status_changed:
+            self.on_status_changed("Conectado al SIMULADOR SR400")
+            
+        print("✅ SIMULADOR: Conexión exitosa (SIMULACIÓN)")
+        return True
+    
+    def disconnect(self):
+        self.is_connected = False
+        print("✅ Simulador desconectado")
+
+    def send_command(self, command: str, wait_time=0.1):
+        print(f"Simulador comando enviado: {command}")
+        return True
+    
+    def query(self, command: str, wait_time=0.2):
+        response = "SIMULATED_RESPONSE"
+        if self.on_data_received:
+            self.on_data_received(response)
+        return response
+    
+    def set_discriminator_level(self, channel: DiscriminatorChannel, voltage: float):
+        self.discriminator_levels[channel] = voltage
+        print(f"Simulador: Nivel del discriminador {channel.name} establecido a {voltage} V")
+        return True
+    
+    def get_discriminator_level(self, channel: DiscriminatorChannel):
+        return self.discriminator_levels[channel]
+    
+    def get_count_rate(self, counter='A'):
+        """Simular tasas de conteo más realistas"""
+        import random
+        import time
+        
+        counter = counter.upper()
+        
+        # Tasas base más realistas para experimentos Raman
+        base_rates = {
+            'A': 1250.5, 
+            'B': 980.3,
+            'T': 50.2
+        }
+        
+        base_rate = base_rates.get(counter, 1000.0)
+        
+        # Variación más realista (ruido Poisson)
+        variation = random.gauss(0, base_rate * 0.02)  # 2% de variación
+        current_rate = max(0, base_rate + variation)
+        
+        # Pequeña deriva temporal para simular cambios en la señal
+        time_factor = (time.time() % 60) / 60.0  # Ciclo de 60 segundos
+        drift = math.sin(time_factor * 2 * math.pi) * base_rate * 0.05
+        
+        return current_rate + drift
+    
+    def start_count(self):
+        self.is_counting = True
+        if self.on_counting_changed:
+            self.on_counting_changed(True)
+        return True
+    
+    def stop_count(self):
+        self.is_counting = False
+        if self.on_counting_changed:
+            self.on_counting_changed(False)
+        return True
+    
+    def reset_count(self):
+        return True
+    
+    def set_default_configuration(self):
+        print("Simulador: Configuración por defecto aplicada")
+        return True
+    
+    def stop_monitoring(self):
+        pass
+
+    def get_status(self):
+        class SimulatedStatus:
+            def __init__(self):
+                self.discriminator_levels ={
+                    'A': -0.010,
+                    'B': -0.010,
+                    'T': -0.010
+                }
+                self.count_rate = {
+                    'A': 1250.5,
+                    'B': 980.3
+                }
+                self.gate_settings = {}
+                self.scan_positions = 1
+                self.is_counting = False
+
+        return SimulatedStatus()
+    
+    def measure_s_curve(self, channel, start_v, end_v, steps, dwell_time=0.5, progress_callback=None):
+        """
+        Simular medición de curva S - genera datos realistas
+        """
+        print(f"📊 SIMULADOR: Iniciando curva S en {channel}")
+        print(f"   - Rango: {start_v}V a {end_v}V")
+        print(f"   - Puntos: {steps}, Tiempo: {dwell_time}s")
+    
+        import numpy as np
+        import time
+    
+        # Generar thresholds
+        thresholds = np.linspace(start_v, end_v, steps)
+        count_rates = []
+    
+        # Simular curva S típica (función sigmoide)
+        for i, threshold in enumerate(thresholds):
+            # Simular tiempo de medición
+            time.sleep(dwell_time * 0.1)  # Más rápido en simulación
+        
+            # Generar curva S realista
+            # Centro de la curva alrededor de 0V
+            center = 0.0
+            # Ancho de la transición
+            width = 0.05
+            # Tasa máxima de conteo
+            max_rate = 1500
+        
+            # Función sigmoide para curva S
+            rate = max_rate / (1 + np.exp(-(threshold - center) / width))
+        
+            # Agregar algo de ruido
+            noise = np.random.normal(0, 50)
+            rate = max(0, rate + noise)
+        
+            count_rates.append(rate)
+        
+            # Callback de progreso
+            if progress_callback:
+                progress = (i + 1) / steps
+                progress_callback(progress, f"Punto {i+1}/{steps}: {threshold:.3f}V")
+        
+            # Simular cancelación
+            if hasattr(self, '_scurve_cancel') and self._scurve_cancel:
+                break
+    
+        print("✅ SIMULADOR: Curva S completada")
+        return np.array(thresholds), np.array(count_rates)
+
 #------Funciones de alto nivel ------
 def measure_s_curve(self,
                     channel: DiscriminatorChannel,
@@ -441,7 +632,7 @@ def quick_measure(self, dewel_time: float=0.1)-> float:
     try:
         self.reset_count()
         self.start_count()
-        time.sleep
+        time.sleep(dewel_time)
         self.stop_count()
         return self.get_count_rate('A') or 0.0
     except:

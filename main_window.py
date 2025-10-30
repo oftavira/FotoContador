@@ -4,7 +4,7 @@ import time
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 import logging
 import numpy as np
-from PyQt5.QtWidgets import (QMainWindow, QTabWidget, QWidget, QVBoxLayout, 
+from PyQt5.QtWidgets import (QMainWindow, QTabWidget, QWidget, QVBoxLayout, QCheckBox, 
                              QHBoxLayout, QGridLayout, QSplitter, QStatusBar, QProgressBar,
                              QMenuBar, QAction, QMessageBox, QFileDialog, QToolBar,
                              QLabel, QSlider, QComboBox, QDoubleSpinBox, QSpinBox)
@@ -33,12 +33,37 @@ except ImportError as e:
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.sr400 = SR400('COM1')
+    
+        # ✅ SISTEMA INTELIGENTE DE DETECCIÓN
+        self.setup_connection_mode()
+    
         self.init_ui()
         self.setup_connections()
-        self.init_scuve_variables()
-        self.setup_scuve_connections()
-        
+        self.init_scurve_variables()
+        self.setup_scurve_connections()
+    
+        # ✅ FORZAR ESTADO INICIAL CORRECTO
+        self.force_initial_state()
+
+    def setup_development_mode(self):
+        """Configurar modo desarrollo forzado - NO intenta conectar a hardware real"""
+        print("🔧 MODO DESARROLLO FORZADO ACTIVADO")
+
+        from sr400_controller import SR400Simulator
+        self.sr400 = SR400Simulator()
+        self.sr400.on_data_received = self.on_data_received
+        self.sr400.on_error = self.on_error
+        self.sr400.on_status_changed = self.on_status_changed
+        self.sr400.on_counting_changed = self.on_counting_changed
+
+        print("✅ Simulador SR400 inicializado (NO hay conexión real)")
+
+    def changeEvent(self, event):
+        """Manejar cambios de estado de la ventana - CORREGIDO"""
+        # Llamar al método de la clase padre con el evento
+        super(MainWindow, self).changeEvent(event)
+
+
     def init_ui(self):
         self.setWindowTitle("Control SR400 - Sistema Raman")
         self.setGeometry(100, 50, 1400, 900)
@@ -245,10 +270,10 @@ class MainWindow(QMainWindow):
         param_layout.addWidget(self.end_v, 2, 1)
 
         param_layout.addWidget(QLabel("Número de Puntos:"), 3, 0)
-        self.scurve_teps = QSpinBox()
-        self.scurve_teps.setRange(10, 200)
-        self.scurve_teps.setValue(50)
-        param_layout.addWidget(self.scurve_teps, 3, 1)
+        self.scurve_steps = QSpinBox()
+        self.scurve_steps.setRange(10, 200)
+        self.scurve_steps.setValue(50)
+        param_layout.addWidget(self.scurve_steps, 3, 1)
 
         param_layout.addWidget(QLabel("Tiempo por punto:"), 4, 0)
         self.scurve_dwell = QDoubleSpinBox()
@@ -327,7 +352,7 @@ class MainWindow(QMainWindow):
         results_layout.addWidget(self.points_measured_label, 2, 1)
 
         self.apply_optimal_btn = ModernButton("Aplicar Threshold Óptimo", color="#f39c12")
-        self.apply_threshold_btn.setEnabled(False)
+        self.apply_optimal_btn.setEnabled(False)
         results_layout.addWidget(self.apply_optimal_btn, 3, 0, 1, 2)
         
         results_group.setLayout(results_layout)
@@ -337,7 +362,7 @@ class MainWindow(QMainWindow):
         
         return tab
 
-    def setup_scuve_connections(self):
+    def setup_scurve_connections(self):
         """Configurar conexiones para la pestaña de curva S"""
         self.start_scurve_btn.clicked.connect(self.start_scurve_measurement)
         self.stop_scurve_btn.clicked.connect(self.stop_scurve_measurement)
@@ -345,7 +370,8 @@ class MainWindow(QMainWindow):
         self.apply_optimal_btn.clicked.connect(self.apply_optimal_threshold)
 
     #Variables para control de la medicón de curva S
-    def init_scuve_variables(self):
+    def init_scurve_variables(self):  # ✅ CORREGIDO: init_scuve_variables -> init_scurve_variables
+        """Variables para control de la medición de curva S"""
         self.scurve_measuring = False
         self.scurve_thread = None
         self.current_scurve_data = None
@@ -395,7 +421,154 @@ class MainWindow(QMainWindow):
         
         panel.setLayout(layout)
         return panel
+
+    def setup_connection_mode(self):
+        """Configurar modo de conexión - Detección automática + diálogo"""
+        print("🔧 Configurando modo de conexión...")
+    
+        from detection_system import HardwareDetector
+        from PyQt5.QtWidgets import QMessageBox, QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QListWidget
+    
+        # Detectar hardware disponible
+        available_ports = HardwareDetector.detect_sr400_ports()
+        sr400_ports = [port for port in available_ports if port['likely_sr400']]
+        other_ports = [port for port in available_ports if not port['likely_sr400']]
+    
+        # Si no hay puertos detectados, forzar simulación
+        if not available_ports:
+            print("❌ No se detectaron puertos seriales. Usando modo simulación.")
+            self.setup_simulation_mode()
+            return
+    
+        # Crear diálogo de selección
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Selección de Modo - Control SR400")
+        dialog.setFixedSize(500, 400)
+    
+        layout = QVBoxLayout()
+    
+        # Título
+        title = QLabel("🔌 Configuración de Conexión SR400")
+        title.setStyleSheet("font-size: 16px; font-weight: bold; margin: 10px;")
+        layout.addWidget(title)
+    
+        # Información de detección
+        if sr400_ports:
+            info_text = f"✅ Se detectaron {len(sr400_ports)} dispositivo(s) posible(es) SR400"
+            info_label = QLabel(info_text)
+            info_label.setStyleSheet("color: green; margin: 10px;")
+            layout.addWidget(info_label)
         
+            # Lista de dispositivos SR400 detectados
+            sr400_list = QListWidget()
+            for port in sr400_ports:
+                sr400_list.addItem(f"📟 {port['device']} - {port['description']}")
+            layout.addWidget(QLabel("Dispositivos SR400 detectados:"))
+            layout.addWidget(sr400_list)
+    
+        if other_ports:
+            other_label = QLabel(f"⚠️  También hay {len(other_ports)} otro(s) puerto(s) serial(es)")
+            other_label.setStyleSheet("color: orange; margin: 10px;")
+            layout.addWidget(other_label)
+    
+        # Botones de opción
+        buttons_layout = QHBoxLayout()
+    
+        if sr400_ports:
+            real_mode_btn = QPushButton("🚀 Modo Real (Hardware)")
+            real_mode_btn.setStyleSheet("QPushButton { background-color: #27ae60; color: white; font-weight: bold; padding: 10px; }")
+            real_mode_btn.clicked.connect(lambda: self.select_real_mode(sr400_ports[0]['device'], dialog))
+            buttons_layout.addWidget(real_mode_btn)
+    
+        simulation_btn = QPushButton("🔧 Modo Simulación")
+        simulation_btn.setStyleSheet("QPushButton { background-color: #3498db; color: white; font-weight: bold; padding: 10px; }")
+        simulation_btn.clicked.connect(lambda: self.select_simulation_mode(dialog))
+        buttons_layout.addWidget(simulation_btn)
+    
+        layout.addLayout(buttons_layout)
+    
+        # Opción de recordar la elección
+        remember_checkbox = QCheckBox("Recordar esta elección (puedes cambiarla después)")
+        layout.addWidget(remember_checkbox)
+    
+        dialog.setLayout(layout)
+    
+        # Mostrar diálogo
+        dialog.exec_()
+
+    def select_real_mode(self, port, dialog):
+        """Seleccionar modo real con hardware"""
+        print(f"🚀 Seleccionado modo REAL con puerto: {port}")
+        from sr400_controller import SR400
+    
+        # Probar conexión
+        from detection_system import HardwareDetector
+        success, message = HardwareDetector.test_connection(port)
+    
+        if success:
+            print(f"✅ Conexión exitosa: {message}")
+            self.sr400 = SR400(port)
+            self.setup_sr400_events()
+            dialog.accept()
+            QMessageBox.information(self, "Conexión Exitosa", 
+                               f"✅ Conectado exitosamente al SR400 en {port}\n\n{message}")
+        else:
+            print(f"❌ Falló la conexión: {message}")
+            retry = QMessageBox.question(self, "Error de Conexión",
+                                   f"❌ No se pudo conectar al SR400 en {port}\n\n{message}\n\n¿Quieres usar el modo simulación?",
+                                   QMessageBox.Yes | QMessageBox.No)
+        
+            if retry == QMessageBox.Yes:
+                self.select_simulation_mode(dialog)
+            else:
+                # Mantener el diálogo abierto para reintentar
+                pass
+
+    def select_simulation_mode(self, dialog):
+        """Seleccionar modo simulación"""
+        print("🔧 Seleccionado modo SIMULACIÓN")
+        from sr400_controller import SR400Simulator
+    
+        self.sr400 = SR400Simulator()
+        self.setup_sr400_events()
+        dialog.accept()
+    
+        QMessageBox.information(self, "Modo Simulación", 
+                           "🔧 Ejecutando en MODO SIMULACIÓN\n\n"
+                           "Puedes probar todas las funciones sin hardware real.\n"
+                           "Para cambiar al modo real, desconecta y vuelve a conectar.")
+    def setup_simulation_mode(self):
+        """Configurar modo simulación directamente"""
+        print("🔧 Configurando modo simulación...")
+        from sr400_controller import SR400Simulator
+        self.sr400 = SR400Simulator()
+        self.setup_sr400_events()
+        print("✅ Simulador SR400 inicializado")
+
+    def setup_sr400_events(self):
+        """Configurar eventos del SR400 (común para ambos modos)"""
+        self.sr400.on_data_received = self.on_data_received
+        self.sr400.on_error = self.on_error
+        self.sr400.on_status_changed = self.on_status_changed
+        self.sr400.on_counting_changed = self.on_counting_changed
+
+    def force_initial_state(self):
+        """Forzar el estado inicial correcto de todos los controles"""
+        print("🔧 Forzando estado inicial correcto...")
+    
+        # Asegurar que el simulador esté en estado correcto
+        if hasattr(self.sr400, 'is_connected'):
+            self.sr400.is_connected = False
+        if hasattr(self.sr400, 'is_counting'):
+            self.sr400.is_counting = False
+    
+        # Aplicar estado desconectado a la UI
+        self.update_connection_indicators(False)
+    
+        print("✅ Estado inicial forzado:")
+        print(f"   - Conectado: {getattr(self.sr400, 'is_connected', 'N/A')}")
+        print(f"   - Contando: {getattr(self.sr400, 'is_counting', 'N/A')}")
+
     def setup_connections(self):
         # Conectar señales de UI
         self.start_count_btn.clicked.connect(self.start_counting)
@@ -403,65 +576,104 @@ class MainWindow(QMainWindow):
         self.reset_btn.clicked.connect(self.reset_counting)
         self.apply_threshold_btn.clicked.connect(self.apply_threshold)
         self.threshold_slider.valueChanged.connect(self.update_threshold_display)
-        self.setup_scuve_connections()
+        self.setup_scurve_connections()
 
         # Conectar señales del controlador SR400
         self.sr400.on_data_received = self.on_data_received
         self.sr400.on_error = self.on_error
         self.sr400.on_status_changed = self.on_status_changed
         self.sr400.on_counting_changed = self.on_counting_changed
+
+    def check_development_mode(self):
+        """Determina si estamos en modo desarrollo"""
+        import os
+        import sys
+    
+        # Opción 1: Variable de entorno
+        if os.getenv('SR400_DEVELOPMENT'):
+            print("🔧 Modo desarrollo activado por variable de entorno")
+            return True
+    
+    # Opción 2: Archivo de configuración
+        if os.path.exists('development_mode.txt'):
+            print("🔧 Modo desarrollo activado por archivo de configuración")
+            return True
         
+    # Opción 3: Verificar si estamos ejecutando desde IDE/editor
+        if any(ide in sys.argv[0] for ide in ['pydev', 'debugpy', 'spyder']):
+            print("🔧 Modo desarrollo detectado (ejecutando desde IDE)")
+            return True
+        
+    # Opción 4: Verificar si hay puertos seriales disponibles
+        try:
+            import serial.tools.list_ports
+            ports = list(serial.tools.list_ports.comports())
+            if not ports:
+                print("⚠️  No se encontraron puertos seriales. Activando modo desarrollo.")
+                return True
+            
+        # Verificar si el puerto COM1 específicamente existe
+            com1_exists = any('COM1' in port.device for port in ports)
+            if not com1_exists:
+                print("⚠️  Puerto COM1 no encontrado. Activando modo desarrollo.")
+                return True
+            
+        except ImportError:
+            print("⚠️  No se pudo verificar puertos seriales. Activando modo desarrollo.")
+            return True
+        
+        print("🔌 Modo producción: hardware real detectado")
+        return False
+
+
     def connect_device(self):
-        """Conectar al dispositivo SR400"""
-        print("Intentando conectar al SR400...")
+        """Conectar al dispositivo SR400 - Versión desarrollo CORREGIDA"""
+        print("🔄 Conectando al SIMULADOR SR400...")
+    
         try:
             success = self.sr400.connect()
-            print(f"Conexión exitosa: {success}")
+        
             if success:
-                #Configurar valores por defecto primero
-                time.sleep(1)
+                # Configurar valores por defecto
+                time.sleep(0.5)
                 if self.sr400.set_default_configuration():
-                    print("Configuración por defecto aplicada")
-
-                    #Actulizar UI
-                    self.conn_led.set_on('green')
-                    self.connect_btn.setEnabled(False)
-                    self.disconnect_btn.setEnabled(True)
-                    self.statusBar().showMessage("Conectado al SR400")
-
-                    #Iniciar actualizaciones en tiempo real
+                    print("✅ Configuración por defecto aplicada (SIMULADOR)")
+                
+                    # ✅ USAR EL MÉTODO CORREGIDO
+                    self.update_connection_indicators(True)
+                    self.statusBar().showMessage("✅ Conectado al SIMULADOR SR400")
+                
+                    # Iniciar actualizaciones en tiempo real
                     self.setup_real_time_updates()
                 else:
-                    self.show_error("Error en configuración inicial")
-                    self.sr400.disconnect()
-
+                    self.show_error("Error en configuración inicial del simulador")
+            else:
+                self.show_error("No se pudo conectar al simulador")
+                
         except Exception as e:
-            error_ms = f"Error al conectar: {str(e)}"
-            print(error_ms)
-            self.show_error(error_ms)
+            error_msg = f"Error al conectar al simulador: {str(e)}"
+            print(error_msg)
+            self.show_error(error_msg)
+
             
     def disconnect_device(self):
-        """Desconectar del dispositivo SR400"""
+        """Desconectar del dispositivo SR400 - CORREGIDO"""
         try:
             # Detener timers de actualización
             if hasattr(self, 'update_timer'):
                 self.update_timer.stop()
             if hasattr(self, 'status_timer'):
                 self.status_timer.stop()
-            
-            #Desconectar dispositivo
+        
+            # Desconectar dispositivo
             self.sr400.stop_monitoring()
             self.sr400.disconnect()
 
-            #Actualizar UI
-            self.conn_led.set_off()
-            self.counting_led.set_off()
-            self.connect_btn.setEnabled(True)
-            self.disconnect_btn.setEnabled(False)
-            self.start_btn.setEnabled(False)
-            self.stop_btn.setEnabled(False)
+            # ✅ USAR EL MÉTODO CORREGIDO
+            self.update_connection_indicators(False)
+            self.update_counting_indicators(False)
 
-            #Resetear displays
+            # Resetear displays
             self.count_display.display(0)
             self.disc_a_value.setText("A: -- mV")
             self.disc_b_value.setText("B: -- mV")
@@ -476,30 +688,51 @@ class MainWindow(QMainWindow):
             self.show_error(error_msg)
 
     def start_counting(self):
-        """Iniciar conteo"""
+        """Iniciar conteo - SOLO cuando se presiona el botón"""
         try:
-            if self.sr400.start_count():
-                self.counting_led.set_on('green')
-                self.start_btn.setEnabled(False)
-                self.stop_btn.setEnabled(True)
-                self.start_count_btn.setEnabled(False)
-                self.stop_count_btn.setEnabled(True)
+            if not self.sr400.is_connected:
+                self.show_error("No conectado al SR400")
+                return
+            
+            if self.sr400.is_counting:
+                print("⚠️  El contador ya está iniciado")
+                return
+            
+            success = self.sr400.start_count()
+            if success:
+                print("✅ Conteo INICIADO manualmente")
+                self.update_counting_indicators(True)
                 self.statusBar().showMessage("Conteo iniciado")
+            
+                # ✅ INICIAR actualización automática del display durante el conteo
+                self.start_display_updates()
+            else:
+                self.show_error("Error al iniciar conteo")
+            
         except Exception as e:
             self.show_error(f"Error al iniciar conteo: {str(e)}")
             
     def stop_counting(self):
-        """Detener conteo"""
+        """Detener conteo - y detener actualizaciones del display"""
         try:
-            if self.sr400.stop_count():
-                self.counting_led.set_off()
-                self.start_btn.setEnabled(True)
-                self.stop_btn.setEnabled(False)
-                self.start_count_btn.setEnabled(True)
-                self.stop_count_btn.setEnabled(False)
+            if not self.sr400.is_counting:
+                print("⚠️  El contador ya está detenido")
+                return
+            
+            success = self.sr400.stop_count()
+            if success:
+                print("✅ Conteo DETENIDO manualmente")
+                self.update_counting_indicators(False)
                 self.statusBar().showMessage("Conteo detenido")
+            
+                # ✅ DETENER actualización automática del display
+                self.stop_display_updates()
+            else:
+                self.show_error("Error al detener conteo")
+            
         except Exception as e:
             self.show_error(f"Error al detener conteo: {str(e)}")
+
             
     def reset_counting(self):
         """Resetear conteo"""
@@ -589,18 +822,82 @@ class MainWindow(QMainWindow):
         self.status_timer.timeout.connect(self.update_status_display)
         self.status_timer.start(1000)
     
-    def update_real_time_display(self):
-        """Actualizar el displat con tasa de conteo actual"""
-        if self.sr400.is_connected and not self.sr400.is_counting:
+    def stop_counting(self):
+        """Detener conteo - y detener actualizaciones del display"""
+        try:
+            if not self.sr400.is_counting:
+                print("⚠️  El contador ya está detenido")
+                return
+            
+            success = self.sr400.stop_count()
+            if success:
+                print("✅ Conteo DETENIDO manualmente")
+                self.update_counting_indicators(False)
+                self.statusBar().showMessage("Conteo detenido")
+            
+                # ✅ DETENER actualización automática del display
+                self.stop_display_updates()
+            else:
+                self.show_error("Error al detener conteo")
+            
+        except Exception as e:
+            self.show_error(f"Error al detener conteo: {str(e)}")
+
+    def start_display_updates(self):
+        """Iniciar actualización automática del display durante el conteo"""
+        if hasattr(self, 'display_update_timer'):
+            self.display_update_timer.stop()
+    
+        self.display_update_timer = QTimer()
+        self.display_update_timer.timeout.connect(self.update_display_during_counting)
+        self.display_update_timer.start(500)  # Actualizar cada 500ms durante el conteo
+        print("🔄 Actualización automática del display INICIADA")
+
+    def stop_display_updates(self):
+        """Detener actualización automática del display"""
+        if hasattr(self, 'display_update_timer'):
+            self.display_update_timer.stop()
+            print("⏹️ Actualización automática del display DETENIDA")
+    
+    def update_display_during_counting(self):
+        """Actualizar el display SOLO durante el conteo activo"""
+        if self.sr400.is_connected and self.sr400.is_counting:
             try:
-                #Leer la tasa de conteo del canal A
-                count_rate = self.sr400.get_count_rate('A')
-                if count_rate is not None:
-                    self.count_display.display(count_rate)
-                    self.rate_a_value.setText(f"Canal A: {count_rate:.1f} Hz")
+                # Leer tasas de conteo actuales
+                count_rate_a = self.sr400.get_count_rate('A')
+                count_rate_b = self.sr400.get_count_rate('B')
+            
+                # Actualizar displays
+                if count_rate_a is not None:
+                    self.count_display.display(count_rate_a)
+                    self.rate_a_value.setText(f"Canal A: {count_rate_a:.1f} Hz")
+            
+                if count_rate_b is not None:
+                    self.rate_b_value.setText(f"Canal B: {count_rate_b:.1f} Hz")
+                
+                # Actualizar timestamp
+                self.update_time.setText(datetime.now().strftime("%H:%M:%S"))
             
             except Exception as e:
-                print(f"Error actualizado display: {e}")
+                print(f"Error actualizando display durante conteo: {e}")
+
+    def update_real_time_display(self):
+        """Actualizar display cuando NO hay conteo activo"""
+        if self.sr400.is_connected and not self.sr400.is_counting:
+            try:
+                # Solo leer si no estamos contando activamente
+                count_rate_a = self.sr400.get_count_rate('A')
+                count_rate_b = self.sr400.get_count_rate('B')
+            
+                if count_rate_a is not None:
+                    self.count_display.display(count_rate_a)
+                    self.rate_a_value.setText(f"Canal A: {count_rate_a:.1f} Hz")
+            
+                if count_rate_b is not None:
+                    self.rate_b_value.setText(f"Canal B: {count_rate_b:.1f} Hz")
+                
+            except Exception as e:
+                print(f"Error en actualización en tiempo real: {e}")
     
     def update_status_display(self):
         """Actualizar la información de estado del equipo"""
@@ -626,6 +923,51 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 print(f"Error actualizando estado: {e}")
     
+    def update_connection_indicators(self, connected):
+        """Actualizar indicadores de conexión - CORREGIDO"""
+        if connected:
+            self.conn_led.set_on('green')
+            self.connect_btn.setEnabled(False)
+            self.disconnect_btn.setEnabled(True)
+            self.start_btn.setEnabled(True)
+            self.stop_btn.setEnabled(False)
+            self.start_count_btn.setEnabled(True)
+            self.stop_count_btn.setEnabled(False)
+            self.reset_btn.setEnabled(True)
+            self.test_btn.setEnabled(True)
+        else:
+            self.conn_led.set_off()
+            self.connect_btn.setEnabled(True)
+            self.disconnect_btn.setEnabled(False)
+            self.start_btn.setEnabled(False)
+            self.stop_btn.setEnabled(False)
+            self.start_count_btn.setEnabled(False)
+            self.stop_count_btn.setEnabled(False)
+            self.reset_btn.setEnabled(False)
+            self.test_btn.setEnabled(False)
+            self.update_counting_indicators(False)
+            
+
+    def update_counting_indicators(self, counting):
+        """Actualizar indicadores de conteo - CORREGIDO"""
+        if counting:
+            self.counting_led.set_on('green')
+            self.start_btn.setEnabled(False)
+            self.stop_btn.setEnabled(True)
+            self.start_count_btn.setEnabled(False)
+            self.stop_count_btn.setEnabled(True)
+            self.reset_btn.setEnabled(False)
+            self.test_btn.setEnabled(False)
+        else:
+            self.counting_led.set_off()
+            self.start_btn.setEnabled(True)
+            self.stop_btn.setEnabled(False)
+            self.start_count_btn.setEnabled(True)
+            self.stop_count_btn.setEnabled(False)
+            self.reset_btn.setEnabled(True)
+            self.test_btn.setEnabled(True)
+
+
     def test_readings(self):
         """Función de prueba lecturas"""
         if not self.sr400.is_connected:
@@ -669,12 +1011,232 @@ class MainWindow(QMainWindow):
             return
         if self.scurve_measuring:
             return
+    def stop_scurve_measurement(self):
+        """Detener medición de Curva S"""
+        print("⏹️ Deteniendo medición de curva S...")
+        self.scurve_measuring = False
+        self.scurve_status.setText("Medición detenida por el usuario")
+        self.start_scurve_btn.setEnabled(True)
+        self.stop_scurve_btn.setEnabled(False)
+        self.scurve_progress.setVisible(False)
+        
+        # También podríamos agregar una bandera de cancelación al simulador
+        if hasattr(self.sr400, '_scurve_cancel'):
+            self.sr400._scurve_cancel = True
+    def export_scurve_data(self):
+        """Exportar datos de Curva S a archivo CSV"""
+        if not hasattr(self, 'current_scurve_data') or not self.current_scurve_data:
+            self.show_error("No hay datos de curva S para exportar")
+            return
+    def apply_optimal_threshold(self):
+        """Aplicar el threshold óptimo calculado"""
+        if not hasattr(self, 'current_scurve_data') or not self.current_scurve_data:
+            self.show_error("No hay datos de curva S para aplicar threshold óptimo")
+            return
+            
+        try:
+            thresholds, count_rates = self.current_scurve_data
+            optimal_threshold = self.calculate_optimal_threshold(thresholds, count_rates)
+            
+            # Determinar canal basado en la selección
+            from sr400_controller import DiscriminatorChannel
+            channel = DiscriminatorChannel.A if self.scurve_channel.currentIndex() == 0 else DiscriminatorChannel.B
+            
+            success = self.sr400.set_discriminator_level(channel, optimal_threshold)
+            
+            if success:
+                message = f"Threshold óptimo aplicado: {optimal_threshold:.4f} V"
+                self.show_info(message)
+                self.statusBar().showMessage(message)
+                print(f"✅ {message}")
+            else:
+                self.show_error("Error al aplicar threshold óptimo")
+                
+        except Exception as e:
+            self.show_error(f"Error al aplicar threshold óptimo: {str(e)}")
+    def _simple_scurve_measurement(self, channel, start_v, end_v, steps, dwell_time):
+        """Medición de curva S simplificada - sin problemas de hilos"""
+        try:
+            print(f"🔧 Iniciando curva S: {steps} puntos")
+            
+            # Usar QTimer para actualizar UI desde hilo principal
+            from PyQt5.QtCore import QTimer
+            import numpy as np
+            
+            # Actualizar progreso inicial
+            QTimer.singleShot(0, lambda: self._update_scurve_progress(0, "Iniciando..."))
+            
+            # Ejecutar medición
+            thresholds, count_rates = self.sr400.measure_s_curve(
+                channel, start_v, end_v, steps, dwell_time,
+                progress_callback=self._safe_progress_update
+            )
+            
+            print(f"✅ Curva S completada: {len(thresholds)} puntos")
+            
+            # Actualizar resultados finales
+            QTimer.singleShot(0, lambda: self._finalize_scurve(thresholds, count_rates))
+            
+        except Exception as e:
+            print(f"❌ Error en curva S: {e}")
+            QTimer.singleShot(0, lambda: self._handle_scurve_error(str(e)))
+    def _safe_progress_update(self, progress, message):
+        """Actualización segura de progreso"""
+        from PyQt5.QtCore import QTimer
+        QTimer.singleShot(0, lambda: self._update_scurve_progress(progress, message))
+
+    def _update_scurve_progress(self, progress, message):
+        """Actualizar progreso en UI"""
+        try:
+            progress_percent = int(progress * 100)
+            self.scurve_progress.setValue(progress_percent)
+            self.scurve_status.setText(message)
+            print(f"📊 Progreso: {progress_percent}% - {message}")
+        except Exception as e:
+            print(f"Error actualizando progreso: {e}")
+
+    def _finalize_scurve(self, thresholds, count_rates):
+        """Finalizar medición de curva S"""
+        try:
+            import numpy as np
+            
+            # Convertir a arrays numpy si es necesario
+            if not hasattr(thresholds, '__array__'):
+                thresholds = np.array(thresholds)
+            if not hasattr(count_rates, '__array__'):
+                count_rates = np.array(count_rates)
+            
+            print(f"📈 Finalizando: {len(thresholds)} puntos")
+            
+            # Guardar datos
+            self.current_scurve_data = (thresholds, count_rates)
+            
+            # Actualizar gráfica
+            self.scurve_data_line.setData(thresholds, count_rates)
+            
+            # Calcular threshold óptimo
+            optimal_threshold = self.calculate_optimal_threshold(thresholds, count_rates)
+            max_count = np.max(count_rates) if len(count_rates) > 0 else 0
+            
+            # Dibujar línea de threshold óptimo
+            if self.optimal_threshold_line:
+                self.scurve_plot.removeItem(self.optimal_threshold_line)
+            
+            import pyqtgraph as pg
+            self.optimal_threshold_line = pg.InfiniteLine(
+                pos=optimal_threshold, angle=90, pen='r',
+                label=f'Óptimo: {optimal_threshold:.4f} V'
+            )
+            self.scurve_plot.addItem(self.optimal_threshold_line)
+            
+            # Actualizar labels
+            if hasattr(self, 'optimal_threshold_label'):
+                self.optimal_threshold_label.setText(f"{optimal_threshold:.4f} V")
+            if hasattr(self, 'max_count_label'):  
+                self.max_count_label.setText(f"{max_count:.1f} Hz")
+            if hasattr(self, 'points_measured_label'):
+                self.points_measured_label.setText(f"{len(thresholds)}")
+            
+            # Habilitar botones
+            self.export_scurve_btn.setEnabled(True)
+            self.apply_optimal_btn.setEnabled(True)
+            
+            # Finalizar medición
+            self.scurve_measuring = False
+            self.start_scurve_btn.setEnabled(True)
+            self.stop_scurve_btn.setEnabled(False)
+            self.scurve_progress.setVisible(False)
+            self.scurve_status.setText("Medición completada correctamente")
+            
+            print("🎉 Curva S finalizada exitosamente")
+            
+        except Exception as e:
+            print(f"Error finalizando curva S: {e}")
+            self._handle_scurve_error(str(e))
+
+    def _handle_scurve_error(self, error_msg):
+        """Manejar error de curva S"""
+        try:
+            self.scurve_measuring = False
+            self.start_scurve_btn.setEnabled(True)
+            self.stop_scurve_btn.setEnabled(False)
+            self.scurve_progress.setVisible(False)
+            self.scurve_status.setText(f"Error: {error_msg}")
+            print(f"❌ Error en curva S: {error_msg}")
+        except Exception as e:
+            print(f"Error manejando error de curva S: {e}")
+
+    def _simple_scurve_measurement(self, channel, start_v, end_v, steps, dwell_time):
+        """Medición de curva S simplificada - sin problemas de hilos"""
+        try:
+            print(f"🔧 Iniciando curva S: {steps} puntos")
+            
+            # Usar QTimer para actualizar UI desde hilo principal
+            from PyQt5.QtCore import QTimer
+            
+            # Actualizar progreso inicial
+            QTimer.singleShot(0, lambda: self._update_scurve_progress(0, "Iniciando..."))
+            
+            # Ejecutar medición
+            thresholds, count_rates = self.sr400.measure_s_curve(
+                channel, start_v, end_v, steps, dwell_time,
+                progress_callback=self._safe_progress_update
+            )
+            
+            print(f"✅ Curva S completada: {len(thresholds)} puntos")
+            
+            # Actualizar resultados finales
+            QTimer.singleShot(0, lambda: self._finalize_scurve(thresholds, count_rates))
+            
+        except Exception as e:
+            print(f"❌ Error en curva S: {e}")
+            QTimer.singleShot(0, lambda: self._handle_scurve_error(str(e)))
+
+        try:
+            from PyQt5.QtWidgets import QFileDialog
+            import numpy as np
+            
+            filename, _ = QFileDialog.getSaveFileName(
+                self, "Guardar Datos Curva S", "", "CSV Files (*.csv)"
+            )
+            
+            if filename:
+                if not filename.endswith('.csv'):
+                    filename += '.csv'
+            
+                thresholds, count_rates = self.current_scurve_data
+                
+                # Asegurarse de que son arrays numpy
+                if not hasattr(thresholds, '__array__'):
+                    thresholds = np.array(thresholds)
+                if not hasattr(count_rates, '__array__'):
+                    count_rates = np.array(count_rates)
+                
+                # Combinar datos
+                data = np.column_stack((thresholds, count_rates))
+                
+                # Guardar con header
+                np.savetxt(
+                    filename, 
+                    data, 
+                    delimiter=',', 
+                    header='Threshold (V),Count Rate (Hz)', 
+                    comments='',
+                    fmt='%.6f,%.2f'
+                )
+                
+                self.show_info(f"Datos exportados a {filename}")
+                print(f"💾 Datos exportados: {filename}")
+        
+        except Exception as e:
+            self.show_error(f"Error al exportar: {str(e)}")
+            print(f"❌ Error exportando: {e}")
 
         #Obtener parámetros
         channel = DiscriminatorChannel.A if self.scurve_channel.currentIndex() == "Discriminador A" else DiscriminatorChannel.B
         start_v = self.start_v.value()
         end_v = self.end_v.value()
-        steps = self.scurve_teps.value()
+        steps = self.scurve_steps.value()
         dwell_time = self.scurve_dwell.value()
 
         #Validar parametros
@@ -706,18 +1268,187 @@ class MainWindow(QMainWindow):
         )
         self.scurve_thread.start()
 
-    def _run_scurve_measurement(self, channel, start_v, end_v, steps, dwell_time):
-        """Ejecutar medición de Curva S (en hilo separado)"""
-        try:
-            thresholds, count_rates = self.sr400.measure_s_curve(
-                channel, start_v, end_v, steps, dwell_time
-                )
-            #Actualizar UI en el hilo principal
-            self._update_scurve_results(thresholds, count_rates)
+    # Agrega estos métodos a main_window.py
+
+    
+def _simple_scurve_measurement(self, channel, start_v, end_v, steps, dwell_time):
+    """Medición de curva S simplificada - sin problemas de hilos"""
+    try:
+        print(f"🔧 Iniciando curva S: {steps} puntos")
         
+        # Usar QTimer para actualizar UI desde hilo principal
+        from PyQt5.QtCore import QTimer
+        import numpy as np
+        
+        # Actualizar progreso inicial
+        QTimer.singleShot(0, lambda: self._update_scurve_progress(0, "Iniciando..."))
+        
+        # Ejecutar medición
+        thresholds, count_rates = self.sr400.measure_s_curve(
+            channel, start_v, end_v, steps, dwell_time,
+            progress_callback=self._safe_progress_update
+        )
+        
+        print(f"✅ Curva S completada: {len(thresholds)} puntos")
+        
+        # Actualizar resultados finales
+        QTimer.singleShot(0, lambda: self._finalize_scurve(thresholds, count_rates))
+        
+    except Exception as e:
+        print(f"❌ Error en curva S: {e}")
+        QTimer.singleShot(0, lambda: self._handle_scurve_error(str(e)))
+
+def _safe_progress_update(self, progress, message):
+    """Actualización segura de progreso"""
+    from PyQt5.QtCore import QTimer
+    QTimer.singleShot(0, lambda: self._update_scurve_progress(progress, message))
+
+def _update_scurve_progress(self, progress, message):
+    """Actualizar progreso en UI"""
+    try:
+        progress_percent = int(progress * 100)
+        self.scurve_progress.setValue(progress_percent)
+        self.scurve_status.setText(message)
+        print(f"📊 Progreso: {progress_percent}% - {message}")
+    except Exception as e:
+        print(f"Error actualizando progreso: {e}")
+
+def _finalize_scurve(self, thresholds, count_rates):
+    """Finalizar medición de curva S"""
+    try:
+        import numpy as np
+        
+        # Convertir a arrays numpy si es necesario
+        if not hasattr(thresholds, '__array__'):
+            thresholds = np.array(thresholds)
+        if not hasattr(count_rates, '__array__'):
+            count_rates = np.array(count_rates)
+        
+        print(f"📈 Finalizando: {len(thresholds)} puntos")
+        
+        # Guardar datos
+        self.current_scurve_data = (thresholds, count_rates)
+        
+        # Actualizar gráfica
+        self.scurve_data_line.setData(thresholds, count_rates)
+        
+        # Calcular threshold óptimo
+        optimal_threshold = self.calculate_optimal_threshold(thresholds, count_rates)
+        max_count = np.max(count_rates) if len(count_rates) > 0 else 0
+        
+        # Dibujar línea de threshold óptimo
+        if self.optimal_threshold_line:
+            self.scurve_plot.removeItem(self.optimal_threshold_line)
+        
+        import pyqtgraph as pg
+        self.optimal_threshold_line = pg.InfiniteLine(
+            pos=optimal_threshold, angle=90, pen='r',
+            label=f'Óptimo: {optimal_threshold:.4f} V'
+        )
+        self.scurve_plot.addItem(self.optimal_threshold_line)
+        
+        # Actualizar labels (corregir nombres)
+        if hasattr(self, 'optimal_threshold_label'):
+            self.optimal_threshold_label.setText(f"{optimal_threshold:.4f} V")
+        if hasattr(self, 'max_count_label'):  
+            self.max_count_label.setText(f"{max_count:.1f} Hz")
+        if hasattr(self, 'points_measured_label'):
+            self.points_measured_label.setText(f"{len(thresholds)}")
+        
+        # Habilitar botones
+        self.export_scurve_btn.setEnabled(True)
+        self.apply_optimal_btn.setEnabled(True)
+        
+        # Finalizar medición
+        self.scurve_measuring = False
+        self.start_scurve_btn.setEnabled(True)
+        self.stop_scurve_btn.setEnabled(False)
+        self.scurve_progress.setVisible(False)
+        self.scurve_status.setText("Medición completada correctamente")
+        
+        print("🎉 Curva S finalizada exitosamente")
+        
+    except Exception as e:
+        print(f"Error finalizando curva S: {e}")
+        self._handle_scurve_error(str(e))
+
+def _handle_scurve_error(self, error_msg):
+    """Manejar error de curva S"""
+    try:
+        self.scurve_measuring = False
+        self.start_scurve_btn.setEnabled(True)
+        self.stop_scurve_btn.setEnabled(False)
+        self.scurve_progress.setVisible(False)
+        self.scurve_status.setText(f"Error: {error_msg}")
+        print(f"❌ Error en curva S: {error_msg}")
+    except Exception as e:
+        print(f"Error manejando error de curva S: {e}")
+    
+    def _thread_safe_progress_callback(self, progress, message):
+        """Callback seguro para hilos - usa invokeMethod"""
+        from PyQt5.QtCore import QMetaObject, Qt, Q_ARG
+        try:
+            QMetaObject.invokeMethod(
+                self, 
+                "_update_progress_ui", 
+                Qt.QueuedConnection,
+                Q_ARG(float, progress),
+                Q_ARG(str, message)
+            )
         except Exception as e:
-            #Manejar erro en hilo principal
-            self._handle_scurve_error(str(e))
+            print(f"Error en callback: {e}")
+
+    def _invoke_update_progress(self, progress, message):
+        """Actualizar progreso de forma segura"""
+        from PyQt5.QtCore import QMetaObject, Qt, Q_ARG
+        QMetaObject.invokeMethod(
+            self, 
+            "_update_progress_ui", 
+            Qt.QueuedConnection,
+            Q_ARG(float, progress),
+            Q_ARG(str, message)
+        )
+
+    def _invoke_update_results(self, thresholds, count_rates):
+        """Actualizar resultados de forma segura"""
+        from PyQt5.QtCore import QMetaObject, Qt, Q_ARG
+        import numpy as np
+    
+        # Convertir a listas para serialización (Q_ARG no maneja numpy arrays bien)
+        thresholds_list = thresholds.tolist() if hasattr(thresholds, 'tolist') else list(thresholds)
+        count_rates_list = count_rates.tolist() if hasattr(count_rates, 'tolist') else list(count_rates)
+    
+        QMetaObject.invokeMethod(
+            self, 
+            "_update_scurve_ui", 
+            Qt.QueuedConnection,
+            Q_ARG(list, thresholds_list),
+            Q_ARG(list, count_rates_list)
+        )
+
+    def _invuke_handle_error(self, error_msg):
+        """Manejar error de forma segura"""
+        from PyQt5.QtCore import QMetaObject, Qt, Q_ARG
+        QMetaObject.invokeMethod(
+            self, 
+            "_show_scurve_error_ui", 
+            Qt.QueuedConnection,
+            Q_ARG(str, error_msg)
+        )
+        
+    def _update_scurve_progress(self, progress, message):
+        """Actualizar progreso desde el hilo de medición"""
+        from PyQt5.QtCore import QTimer
+        QTimer.singleShot(0, lambda: self._update_progress_ui(progress, message))
+
+    def _update_progress_ui(self, progress, message):
+        """Actualizar UI de progreso en el hilo principal"""
+        try:
+            self.scurve_progress.setValue(int(progress * 100))
+            self.scurve_status.setText(message)
+            print(f"📊 Progreso: {progress*100:.1f}% - {message}")
+        except Exception as e:
+            print(f"Error actualizando progreso: {e}")
     
     def _update_scurve_results(self, thresholds, count_rates):
         """Actualizar UI con resultados de Curva S (llamar desde hilo principal)"""
@@ -844,6 +1575,24 @@ class MainWindow(QMainWindow):
     def show_info(self, message):
         """Mostrar mensaje informativo"""
         QMessageBox.information(self, "Información", message)
+
+    def verify_event_connections(self):
+        """Verificar que todos los eventos estén correctamente conectados"""
+        if not hasattr(self.sr400, 'on_data_received') or self.sr400.on_data_received != self.on_data_received:
+            self.sr400.on_data_received = self.on_data_received
+            print("✅ on_data_received conectado")
+    
+        if not hasattr(self.sr400, 'on_error') or self.sr400.on_error != self.on_error:
+            self.sr400.on_error = self.on_error
+            print("✅ on_error conectado")
+        
+        if not hasattr(self.sr400, 'on_status_changed') or self.sr400.on_status_changed != self.on_status_changed:
+            self.sr400.on_status_changed = self.on_status_changed
+            print("✅ on_status_changed conectado")
+        
+        if not hasattr(self.sr400, 'on_counting_changed') or self.sr400.on_counting_changed != self.on_counting_changed:
+            self.sr400.on_counting_changed = self.on_counting_changed
+            print("✅ on_counting_changed conectado")
 
 
 if __name__ == "__main__":
